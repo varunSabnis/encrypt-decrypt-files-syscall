@@ -1,0 +1,110 @@
+Description
+
+This repo contains a kernel module to support system call for encrypting and decrypting files. 
+It includes code to read in the user arguments that get passed to the system call. Scripts to
+test the system call are also provided.
+
+Approach
+
+The command line executable "test_cryptocopy" is used to execute the system call. It takes in the following args -
+
+Flag:	
+
+functionality : -e | -d | -c 
+e - Encryption
+d - Decryption
+c - Copy
+
+password : -p (Password) 
+Provide password of length >= 6 if functionality is either encryption/decryption
+It will be ignored if it is Copy functionality.
+
+help: -h (Help) 
+It is used to provide a help message
+
+Input file name: file name
+
+Input file to copy/encrypt/decrypt
+
+output file name: file name
+
+Output file to which encrypted content is copied to / decrypted to / encrypted to.
+
+Steps
+
+First, the patch was applied to add our new system call to the system call table. It also creates a 
+syscall entry point for supporting system call as loadable module. 
+
+Userland Code -
+
+1. The args passed from the user are validated and maintained in a 
+struct which has it's declaration in "syscall_struct.h". The passphrase 
+passed by user as command line argument is hashed using MD5 and stored in the structure.  
+The pointer to the structure is passed to the syscall. 
+
+Kernel Code - 
+
+1. The user args are validated by checking if they have valid virtual addresses , ie within the process address space. 
+2. The user args are copied to a structure in kernel space using copy_from_user.  
+3. The hash of the password is validated and it is again hashed using sha256 to get the preamble.
+4. The input & output filename is copied from user arg to a buffer in kernel space using getname function. 
+5. The file permissions are obtained from vfs_stat and the output file mode is set to be same as input file.
+   The input and output files are also checked to confirm that they are regular files. The inode numbers are 
+   also compared to confirm that they are not hard links of each other.
+6. The input file is opened for reading and the output file is opened for writing. It is created if it does
+   not exist. A temporary file is also opened to which the data is actually written and on success it is renamed 
+   to the original output file. On failure we delete the temporary file as well as the output file if it had not 
+   already existing in the system. This ensures "atomic" execution.
+7. Encryption is done if the flag is set to 0x1. First, the preamble is written to output temporary file. The offset
+   pointer shifts by 32 bytes. Using symmetric key encryption algorithm "AES" in "CTR" mode, the data from the 
+   input file is encrypted and written to the output file. The kernel Crypto API (skcipher apis) are used to 
+   perform the encryption. 
+8. Decryption is done if the flag is set to 0x2. First, the hashed cipher key (hash of hash of passphrase) is verified with 
+   the preamble in the encrypted file. If verification is successful, the remaining data in the file is decrypted using "AES" 
+   symmetric key decryption algorithm (Crypto API in kernel).
+9. In case the flag is 0x4. The input file is directly copied without encryption/decryption.
+10. As mentioned in point 6. we create temp files for atomicity. The files are deleted using vfs_unlink and 
+    renamed using vfs_rename.
+11. At the end, all the cleanup is done, freeing up allocated memory, closing files etc.
+
+
+Files included in submission -
+
+- CSE-506
+1. Makefile - Build objects for syscall module and userland c file (xhw1.c)
+2. install_module.sh - Installing loadable module.
+3. sys_cryptocopy.c - System call kernel code     
+4. xhw1.c - Userland code to pass user arguments to system call.         
+5. syscall_struct.h - Header file to store structure of arguments.
+6. test01.sh - test basic copy functionality
+7. test02.sh - test basic encrypt-decrypt functionality
+8. test03.sh - test functionality with invalid option
+9. test04.sh - test functionality with missing outputfile name
+10. test05.sh - test functionality with missing password
+11. test06.sh - test basic encrypt decrypt functionality with invalid password
+12. test07.sh - test encrpyt with output file being hard link of input file
+13. test08.sh - test functionality with password length < 6
+14. test09.sh - test encrpyt with input file absent
+15. test10.sh - test encrypt-decrypt functionality for larger files
+16. all_tests.sh - Runs all the above tests
+17. kernel.config - Kernel config file
+18. README
+
+- vsabnis-hw1
+  .config - Minimal Kernel config file
+
+
+References -
+1. https://kernel.readthedocs.io/en/sphinx-samples/crypto-API.html#code-examples
+2. https://www3.cs.stonybrook.edu/~ezk/cse506-s22/lectures/6.c
+3. https://www3.cs.stonybrook.edu/~ezk/cse506-s22/lectures/7.c
+4. https://www3.cs.stonybrook.edu/~ezk/cse506-s22/lectures/9.c
+5. https://www.openssl.org/docs/man1.1.1/man3/MD5.html
+6. https://manpages.debian.org/testing/linux-manual-4.8/crypto_alloc_shash.9
+7. https://manpages.debian.org/testing/linux-manual-4.8/crypto_shash_digest.9.en.html
+
+
+
+
+
+
